@@ -412,6 +412,7 @@ runs:
           echo "KERNEL_VER=$VERSION.$PATCHLEVEL"
           echo "TKERNEL_VER=$FULL_VERSION"
           echo "KERNEL_FULL_VER=$ANDROID_VERSION-$FULL_VERSION"
+          echo "CCACHE_KERNEL_FULL_VER=android14-6.1.118" >> "$GITHUB_ENV"
           if [ "${{ env.OP_SUSFS }}" = true ]; then
             echo "SUSFS_KERNEL_BRANCH=gki-$ANDROID_VERSION-$VERSION.$PATCHLEVEL"
           fi
@@ -668,12 +669,11 @@ runs:
       if: ${{ inputs.clean == false || inputs.clean == 'false' }}
       with:
         cache_path: ${{ env.CCACHE_DIR }}
-        cache_key: ${{ inputs.ksu_type }}-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
+        cache_key: ${{ inputs.ksu_type }}-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.CCACHE_KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
         cache_bucket: "ccache-cache"
         debug: ${{ inputs.debug }}
         restore_keys: |
-          ${{ inputs.ksu_type }}-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
-          ${{ inputs.ksu_type }}-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
+          ${{ inputs.ksu_type }}-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.CCACHE_KERNEL_FULL_VER }}-
 
     - name: Restore LTO LD cache
       id: restore-lto-ld-cache
