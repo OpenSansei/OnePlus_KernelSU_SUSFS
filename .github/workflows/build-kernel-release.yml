@@ -175,7 +175,7 @@ jobs:
           # Local fork: force build ONLY OnePlus 13R OOS16 android14-6.1
           filtered=$(echo "$filtered" | jq -c '
             map(select(
-              .manifest == "manifests/oos16/oneplus_13r_w.xml"
+              .model == "OP13r"
               and .os_version == "OOS16"
               and .android_version == "android14"
               and .kernel_version == "6.1"
