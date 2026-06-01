@@ -1406,6 +1406,60 @@ runs:
         CONFIG_NET_SCH_FQ_CODEL=y
         EOF
 
+    - name: Add MT76 MT7612U Support
+
+      shell: bash
+
+      run: |
+
+        set -euo pipefail
+
+        echo "Add MT76/MT7612U USB support"
+
+
+        echo "Checking MT76 source exists..."
+
+        if ! grep -Rqs "config MT76x2U" "$COMMON_KERNEL_FOLDER/drivers/net/wireless"; then
+
+          echo "::error::MT76x2U Kconfig source not found in common kernel tree"
+
+          find "$COMMON_KERNEL_FOLDER/drivers/net/wireless" -maxdepth 5 -type d | sort | grep -Ei "mediatek|mt76" || true
+
+          exit 1
+
+        fi
+
+
+        cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
+
+        CONFIG_WLAN=y
+
+        CONFIG_CFG80211=m
+
+        CONFIG_MAC80211=m
+
+        CONFIG_WLAN_VENDOR_MEDIATEK=y
+
+        CONFIG_MT76=m
+
+        CONFIG_MT76_USB=m
+
+        CONFIG_MT76x02_LIB=m
+
+        CONFIG_MT76x02_USB=m
+
+        CONFIG_MT76x2_COMMON=m
+
+        CONFIG_MT76x2U=m
+
+        EOF
+
+
+        echo "Requested MT76 config:"
+
+        grep -E "CONFIG_(CFG80211|MAC80211|MT76|MT76_USB|MT76x02|MT76x2)" "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" || true
+
+
     - name: Add TTL Target Support
       if: ${{ env.OP_TTL == 'true' }}
       shell: bash
