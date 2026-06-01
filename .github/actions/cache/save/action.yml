@@ -104,7 +104,7 @@ runs:
           echo "::endgroup::"
           
           echo "::group:: Uploading Assets"
-          MAX_SIZE=2000000000 # ~1.86GB
+          MAX_SIZE=500000000 # ~477MB chunks for more reliable ccache uploads
           
           upload_with_retry() {
             local file=$1
@@ -113,12 +113,12 @@ runs:
               echo "  Attempt $i for $file..."
               
               if [ "${{ inputs.debug }}" = "true" ]; then
-                if timeout 10m gh release upload "$TAG_NAME" "$file" --clobber --repo "$TARGET_REPO"; then
+                if timeout 30m gh release upload "$TAG_NAME" "$file" --clobber --repo "$TARGET_REPO"; then
                   echo "  Successfully uploaded $file"
                   return 0
                 fi
               else
-                if timeout 10m gh release upload "$TAG_NAME" "$file" --clobber --repo "$TARGET_REPO" > /dev/null 2>&1; then
+                if timeout 30m gh release upload "$TAG_NAME" "$file" --clobber --repo "$TARGET_REPO" > /dev/null 2>&1; then
                   echo "  Successfully uploaded $file"
                   return 0
                 fi
@@ -132,7 +132,7 @@ runs:
           
           if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
             echo "⚠ File > 2GB. Splitting..."
-            split -b 1500M -a 2 "$FILENAME" "${FILENAME}.part"
+            split -b 500M -a 2 "$FILENAME" "${FILENAME}.part"
             for part in "${FILENAME}".part*; do
               echo "Uploading $part..."
               if ! upload_with_retry "$part"; then
