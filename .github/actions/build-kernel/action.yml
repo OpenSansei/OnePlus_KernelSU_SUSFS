@@ -123,8 +123,10 @@ runs:
         soc="$OP_SOC"
         branch="$OP_BRANCH"
         manifest="$OP_MANIFEST"
-        if [[ "${OP_MODEL:-}" == "OP13r" && "${OP_OS_VERSION:-}" == "OOS16" && "$manifest" != "oneplus_13r_6.1.118_w.xml" ]]; then
-          errors+=("Wrong OP13r OOS16 manifest: '$manifest'; expected oneplus_13r_6.1.118_w.xml")
+        if [[ "${OP_MODEL:-}" == "OP13r" && "${OP_OS_VERSION:-}" == "OOS16" ]]; then
+          if ! grep -q "35f7c28cf36e19e3243a9db8496d5e70b94e34ce" "manifests/oos16/$manifest"; then
+            errors+=("OP13r OOS16 manifest does not contain pinned 6.1.118 common-kernel SHA")
+          fi
         fi
         android_version="$OP_ANDROID_VERSION"
         kernel_version="$OP_KERNEL_VERSION"
