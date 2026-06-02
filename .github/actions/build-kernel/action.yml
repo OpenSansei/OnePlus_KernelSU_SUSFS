@@ -860,6 +860,47 @@ runs:
         sed -i 's/protected_modules = \[.*\]/protected_modules = []/' common/modules.bzl || true
         echo "::endgroup::"
 
+    - name: Enable MT76 USB Wi-Fi modules
+      shell: bash
+      if: ${{ env.OP_MT76 == 'true' }}
+      run: |
+        set -euo pipefail
+        echo "::group::Enable MT76 USB Wi-Fi modules"
+
+        defconfig="$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
+        mt76_dir="$COMMON_KERNEL_FOLDER/drivers/net/wireless/mediatek/mt76"
+
+        [ -f "$defconfig" ] || { echo "::error::Missing $defconfig"; exit 1; }
+        [ -d "$mt76_dir" ] || { echo "::error::Missing MT76 source dir: $mt76_dir"; exit 1; }
+        [ -f "$mt76_dir/mt76x2/Kconfig" ] || { echo "::error::Missing mt76x2 Kconfig"; exit 1; }
+
+        for sym in \
+          WLAN WLAN_VENDOR_MEDIATEK CFG80211 MAC80211 \
+          MT76_CORE MT76_USB MT76x02_LIB MT76x02_USB \
+          MT76x2_COMMON MT76x2U MT76_LEDS
+        do
+          sed -i "/^CONFIG_${sym}=/d;/^# CONFIG_${sym} is not set/d" "$defconfig"
+        done
+
+        cat >> "$defconfig" <<'EOF'
+    CONFIG_WLAN=y
+    CONFIG_WLAN_VENDOR_MEDIATEK=y
+    CONFIG_CFG80211=m
+    CONFIG_MAC80211=m
+    CONFIG_MT76_CORE=m
+    CONFIG_MT76_USB=m
+    CONFIG_MT76x02_LIB=m
+    CONFIG_MT76x02_USB=m
+    CONFIG_MT76x2_COMMON=m
+    CONFIG_MT76x2U=m
+    # CONFIG_MT76_LEDS is not set
+    EOF
+
+        echo "MT76 config lines:"
+        grep -E 'CONFIG_(WLAN|WLAN_VENDOR_MEDIATEK|CFG80211|MAC80211|MT76)' "$defconfig" | tail -80
+
+        echo "::endgroup::"
+
     - name: Add KernelSU Next
       shell: bash
       if: ${{ inputs.ksu_type == 'KSUN' }}
