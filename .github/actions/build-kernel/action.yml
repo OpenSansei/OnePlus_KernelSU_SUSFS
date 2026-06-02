@@ -2099,6 +2099,80 @@ runs:
           echo "| **AnyKernel3 SHA256** | \`${{ steps.create_zip.outputs.zip_sha256 }}\` |"
         } >> "$GITHUB_STEP_SUMMARY"
 
+    - name: Shrink debug artifact to modules only
+      if: ${{ inputs.debug == true || inputs.debug == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        echo "::group::Create modules-only debug artifact"
+
+        STAGE="$RUNNER_TEMP/modules_debug"
+        rm -rf "$STAGE"
+        mkdir -p "$STAGE/modules" "$STAGE/meta"
+
+        echo "Collecting built kernel modules..."
+
+        # Copy all built .ko files, preserving paths relative to kernel_platform.
+        find "$KERNEL_PLATFORM_FOLDER" -type f -name '*.ko' -print0 \
+          | while IFS= read -r -d '' f; do
+              rel="${f#$KERNEL_PLATFORM_FOLDER/}"
+              mkdir -p "$STAGE/modules/$(dirname "$rel")"
+              cp -v "$f" "$STAGE/modules/$rel"
+            done
+
+        echo "Collecting useful metadata..."
+
+        find "$KERNEL_PLATFORM_FOLDER" -type f \( \
+            -name 'Module.symvers' \
+            -o -name 'modules.order' \
+            -o -name 'modules.builtin' \
+            -o -name 'modules.builtin.modinfo' \
+            -o -name '.config' \
+          \) -print0 \
+          | while IFS= read -r -d '' f; do
+              rel="${f#$KERNEL_PLATFORM_FOLDER/}"
+              safe="$(echo "$rel" | tr '/' '__')"
+              cp -v "$f" "$STAGE/meta/$safe"
+            done
+
+        {
+          echo "model=$OP_MODEL"
+          echo "os=$OP_OS_VERSION"
+          echo "kernel=$KERNEL_FULL_VER"
+          echo "ksu_type=${{ inputs.ksu_type }}"
+          echo "clang=$CLANG_VERSION"
+          echo "build_timestamp=${{ inputs.build_timestamp }}"
+        } > "$STAGE/meta/build-info.txt"
+
+        echo "Module count:"
+        find "$STAGE/modules" -type f -name '*.ko' | wc -l
+
+        echo "Stage size:"
+        du -sh "$STAGE"
+
+        # Replace previous huge debug payload if it exists.
+        rm -rf "$DEBUG_ARTIFACTS_FOLDER"
+        mkdir -p "$DEBUG_ARTIFACTS_FOLDER"
+
+        cp -a "$STAGE"/. "$DEBUG_ARTIFACTS_FOLDER"/
+
+        # Also create the expected zip name in both likely locations.
+        rm -f "$GITHUB_WORKSPACE/$DEBUG_ZIP_NAME" "$DEBUG_ARTIFACTS_FOLDER/$DEBUG_ZIP_NAME"
+
+        (
+          cd "$STAGE"
+          zip -qr "$GITHUB_WORKSPACE/$DEBUG_ZIP_NAME" .
+        )
+
+        cp -v "$GITHUB_WORKSPACE/$DEBUG_ZIP_NAME" "$DEBUG_ARTIFACTS_FOLDER/$DEBUG_ZIP_NAME"
+
+        echo "Final modules-only debug zip:"
+        ls -lh "$GITHUB_WORKSPACE/$DEBUG_ZIP_NAME" "$DEBUG_ARTIFACTS_FOLDER/$DEBUG_ZIP_NAME"
+        du -sh "$DEBUG_ARTIFACTS_FOLDER"
+
+        echo "::endgroup::"
+
     - name: Upload Debug Artifacts
       if: ${{ always() && !cancelled() && inputs.debug == 'true' }}
       uses: actions/upload-artifact@v7
