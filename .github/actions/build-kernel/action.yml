@@ -123,6 +123,9 @@ runs:
         soc="$OP_SOC"
         branch="$OP_BRANCH"
         manifest="$OP_MANIFEST"
+        if [[ "${OP_MODEL:-}" == "OP13r" && "${OP_OS_VERSION:-}" == "OOS16" && "$manifest" != "oneplus_13r_6.1.118_w.xml" ]]; then
+          errors+=("Wrong OP13r OOS16 manifest: '$manifest'; expected oneplus_13r_6.1.118_w.xml")
+        fi
         android_version="$OP_ANDROID_VERSION"
         kernel_version="$OP_KERNEL_VERSION"
         os_version="$OP_OS_VERSION"
