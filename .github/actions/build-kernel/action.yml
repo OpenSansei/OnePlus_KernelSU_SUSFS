@@ -2101,7 +2101,8 @@ runs:
       uses: actions/upload-artifact@v7
       with:
         name: ${{ env.DEBUG_ZIP_NAME }}
-        path: ${{ env.DEBUG_ARTIFACTS_FOLDER }}
+        path: ${{ env.DEBUG_ARTIFACTS_FOLDER || format('{0}/debug_artifacts', github.workspace) }}
+        if-no-files-found: ignore
         compression-level: 9
         retention-days: 90
 
