@@ -81,7 +81,7 @@ on:
 
 jobs:
   set-op-model:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       device_count: ${{ steps.set-matrix.outputs.count }}
@@ -535,7 +535,7 @@ jobs:
       !cancelled() &&
       needs.set-op-model.result == 'success' &&
       (needs.mirror_toolchain.result == 'success' || needs.mirror_toolchain.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.set-op-model.outputs.matrix) }}
@@ -788,7 +788,7 @@ jobs:
 
   trigger-release:
     needs: [set-op-model, build]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     if: |
       !cancelled() &&
       inputs.make_release == true &&
