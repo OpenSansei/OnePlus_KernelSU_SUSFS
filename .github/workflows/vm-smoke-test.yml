@@ -1,0 +1,55 @@
+name: VM SSH Smoke Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-vm:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup SSH key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/vm_key
+          chmod 600 ~/.ssh/vm_key
+          ssh-keyscan -H "${{ secrets.VM_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Test VM connection
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh -i ~/.ssh/vm_key \
+            "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" '
+              set -e
+              echo "CONNECTED_OK"
+              hostname
+              nproc
+              free -h
+              df -h
+              mkdir -p ~/kernel-builds/artifacts
+              echo "vm artifact test" > ~/kernel-builds/artifacts/test.txt
+            '
+
+      - name: Download VM artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+
+          rsync -avz \
+            -e "ssh -i ~/.ssh/vm_key" \
+            "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}:~/kernel-builds/artifacts/" \
+            ./artifacts/
+
+          ls -lah artifacts
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vm-smoke-test-artifact
+          path: artifacts/
+          if-no-files-found: error
