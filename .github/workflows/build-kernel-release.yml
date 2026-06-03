@@ -81,7 +81,7 @@ on:
 
 jobs:
   set-op-model:
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       device_count: ${{ steps.set-matrix.outputs.count }}
@@ -98,12 +98,339 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_HTTP_TIMEOUT: 600
     steps:
+      - name: 📥 Checkout Code (to access configs/)
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            configs/
+          sparse-checkout-cone-mode: false
+
+      - name: 🔍 Generate build matrix
+        id: set-matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::Matrix generation"
+          
+          input="${{ github.event.inputs.op_model }}"
+          ksu_options_raw='${{ github.event.inputs.ksu_options }}'
+          if ! ksu_options_normalized=$(echo "$ksu_options_raw" | jq -c 'map(if .type then .type |= ascii_upcase | if .hash == null then if .type == "KSUN" then .hash = "dev" elif .type == "KSU" then .hash = "main" else .hash end else . end else error("No type found") end)' 2>&1); then
+            echo "::error::ksu_options validation failed: $ksu_options_normalized"
+            exit 1
+          fi
+          
+          echo "ksu_options_normalized=$ksu_options_normalized" >> $GITHUB_OUTPUT
+          
+          echo "[" > matrix.json
+          mapfile -t all_json_files < <(find configs/ -name "*.json" -print0 | xargs -0 -n1)
+          for i in "${!all_json_files[@]}"; do
+            file="${all_json_files[$i]}"
+            if [ -f "$file" ]; then
+              jq -r '.' "$file" >> matrix.json
+              if [ $((i+1)) -lt ${#all_json_files[@]} ]; then
+                echo "," >> matrix.json
+              fi
+            fi
+          done
+          echo "]" >> matrix.json
+          
+          jq_filter="."
+          
+          case "$input" in
+            OOS14+15+16)
+              ;;
+            OOS15+16)
+              jq_filter="map(select(.os_version == \"OOS15\" or .os_version == \"OOS16\"))"
+              ;;
+            OOS14+15)
+              jq_filter="map(select(.os_version == \"OOS14\" or .os_version == \"OOS15\"))"
+              ;;
+            OOS16)
+              jq_filter="map(select(.os_version == \"OOS16\"))"
+              ;;
+            OOS15)
+              jq_filter="map(select(.os_version == \"OOS15\"))"
+              ;;
+            OOS14)
+              jq_filter="map(select(.os_version == \"OOS14\"))"
+              ;;
+            android*-*.*)
+              # Extract android version and kernel version
+              IFS='-' read -r av kv <<< "$input"
+              
+              # Build android*-* only for OOS15 and OOS16
+              jq_filter="map(select(.os_version == \"OOS15\" or .os_version == \"OOS16\")) | map(select(.android_version == \"$av\" and .kernel_version == \"$kv\"))"
+              
+              echo "ℹ️  Android-Kernel filter applied: $av-$kv"
+              echo "   Restricted to: OOS15 and OOS16 only"
+              ;;
+            *)
+              echo "::warning::Unknown input '$input'. Using empty filter."
+              jq_filter="map(select(false))"
+              ;;
+          esac
+          
+          filtered=$(jq -c "$jq_filter" matrix.json)
+          count=$(jq 'length' <<<"$filtered")
+          
+          filtered=$(echo "$filtered" | jq '
+            sort_by(
+              (.os_version | gsub("OOS"; "") | tonumber) * -1,
+              .model
+            )
+          ')
+          
+          if [ "$count" -eq 0 ]; then
+            echo "::error::No config files found for input '$input' after applying filters!"
+            echo ""
+            echo "Available configurations:"
+            jq -r '.[] | "  - \(.model) (\(.os_version), \(.android_version)-\(.kernel_version))"' matrix.json
+            exit 1
+          fi
+          
+          echo "$filtered" | jq '.' > matrix.json
+          
+          # For each device + each ksu option → one combined entry
+          merged_matrix=$(jq -n --argjson devices "$filtered" --argjson ksu_list "$ksu_options_normalized" '[ $devices[] as $dev | $ksu_list[] as $ksu | ($dev + {ksu_type: $ksu.type, ksu_hash: $ksu.hash}) ]')
+          
+          final_count=$(echo "$merged_matrix" | jq 'length')
+          
+          echo "✅ Found $final_count device(s) to build"
+          echo ""
+          echo "Selected devices:"
+          jq -r '.[] | "  - \(.model) (\(.os_version), \(.android_version)-\(.kernel_version), \(.ksu_type) - \(.ksu_hash))"' <<<"$merged_matrix"
+          
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          
+          ksu_type=$(echo "$ksu_options_normalized" | jq -r '.[0].type')
+          ksu_ref=$(echo "$ksu_options_normalized" | jq -r '.[0].hash')
+          
+          if [ "$ksu_type" == "KSUN" ]; then
+            KSU_REPO_OWNER="KernelSU-Next"
+            KSU_REPO_NAME="KernelSU-Next"
+          else
+            KSU_REPO_OWNER="tiann"
+            KSU_REPO_NAME="KernelSU"
+          fi
+          
+          HEAD_REF="refs/heads/${ksu_ref}"
+          TAG_REF="refs/tags/${ksu_ref}"
+          
+          QUERY='query($owner: String!, $name: String!, $headRef: String!, $tagRef: String!, $objRef: String!) {
+            repository(owner: $owner, name: $name) {
+              hb: ref(qualifiedName: $headRef) { t: target { ... on Commit { o: oid } } }
+              ht: ref(qualifiedName: $tagRef) { t: target { ... on Commit { o: oid } } }
+              ho: object(expression: $objRef) { ... on Commit { o: oid } }
+            }
+          }'
+          
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+          RETRY_DELAY=5 # Seconds to wait between retries
+          
+          echo "Resolving $ksu_type hash ($ksu_ref)..."
+          
+          until [ $RETRY_COUNT -ge $MAX_RETRIES ]; do
+            RESULT=$(gh api graphql -f query="$QUERY" -f owner="$KSU_REPO_OWNER" -f name="$KSU_REPO_NAME" -f headRef="$HEAD_REF" -f tagRef="$TAG_REF" -f objRef="$ksu_ref" 2>/dev/null)
+            EXIT_CODE=$?
+            
+            if [ $EXIT_CODE -eq 0 ] && [ ! -z "$RESULT" ]; then
+              echo "  ✅ API Success"
+              break
+            fi
+            
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo "::warning::API failed (Attempt $RETRY_COUNT/$MAX_RETRIES). Retrying in ${RETRY_DELAY}s..."
+            sleep $RETRY_DELAY
+          done
+          
+          if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+            echo "::error::GitHub API unreachable. Cannot validate $ksu_ref"
+            exit 1
+          fi
+          
+          resolved_sha=$(echo "$RESULT" | jq -r '.data.repository | (.hb.t.o // .ht.t.o // .ho.o // "unknown")')
+          
+          if [ "$resolved_sha" == "unknown" ]; then
+            echo "::error::Ref/Hash '$ksu_ref' does not exist in $KSU_REPO_OWNER/$KSU_REPO_NAME"
+            exit 1
+          fi
+          
+          echo "  ✅ Resolved: $ksu_type/$ksu_ref → $resolved_sha"
+          echo "ksu_resolved_hash=$resolved_sha" >> "$GITHUB_OUTPUT"
+          
+          # Inject ksu_resolved_hash into each device in the matrix
+          merged_matrix=$(echo "$merged_matrix" | jq  --arg resolved_sha "$resolved_sha" 'map(.ksu_resolved_hash = $resolved_sha)')
+          
+          # SUSFS hash fetch
+          SUSFS_REPO="https://gitlab.com/simonpunk/susfs4ksu.git"
+          GITLAB_PROJECT_PATH="simonpunk/susfs4ksu"
+          
+          declare -A default_branches=(
+            ["android12-5.10"]="gki-android12-5.10"
+            ["android13-5.15"]="gki-android13-5.15"
+            ["android14-6.1"]="gki-android14-6.1"
+            ["android15-6.6"]="gki-android15-6.6"
+            ["android16-6.12"]="gki-android16-6.12"
+          )
+          
+          declare -A user_inputs=(
+            ["android12-5.10"]="${{ inputs.android12-5_10_susfs_branch_or_commit }}"
+            ["android13-5.15"]="${{ inputs.android13-5_15_susfs_branch_or_commit }}"
+            ["android14-6.1"]="${{ inputs.android14-6_1_susfs_branch_or_commit }}"
+            ["android15-6.6"]="${{ inputs.android15-6_6_susfs_branch_or_commit }}"
+            ["android16-6.12"]="${{ inputs.android16-6_12_susfs_branch_or_commit }}"
+          )
+          
+          mapfile -t active_keys < <(
+            echo "$merged_matrix" \
+              | jq -r '.[] | select(.susfs == true) | "\(.android_version)-\(.kernel_version)"' \
+              | sort -u
+          )
+          
+          echo "🔍 Resolving SUSFS hashes for: ${active_keys[*]:-none}"
+          
+          declare -A susfs_hashes
+          declare -A susfs_versions_per_key
+          
+          for key in "${active_keys[@]}"; do
+            default_val="${default_branches[$key]}"
+            user_val="${user_inputs[$key]:-$default_val}"
+            
+            # Build GraphQL query — include blob fetch only when releasing
+            HASH_QUERY="{ project(fullPath: \"${GITLAB_PROJECT_PATH}\") { repository { ch: commit(ref: \"${user_val}\") { sha } } } }"
+            RELEASE_QUERY="{ project(fullPath: \"${GITLAB_PROJECT_PATH}\") { repository { ch: commit(ref: \"${user_val}\") { sha } blobs(paths: [\"kernel_patches/include/linux/susfs.h\"], ref: \"${user_val}\") { nodes { rawBlob } } } } }"
+            
+            if [ "${{ inputs.make_release }}" = "true" ]; then
+              GL_QUERY="$RELEASE_QUERY"
+            else
+              GL_QUERY="$HASH_QUERY"
+            fi
+            
+            MAX_RETRIES=3
+            RETRY_COUNT=0
+            RETRY_DELAY=5
+            resolved=""
+            
+            until [ $RETRY_COUNT -ge $MAX_RETRIES ]; do
+              RESPONSE=$(curl -s --fail -G "https://gitlab.com/api/graphql" --data-urlencode "query=$GL_QUERY")
+              EXIT_CODE=$?
+              
+              if [ $EXIT_CODE -eq 0 ] && [ -n "$RESPONSE" ]; then
+                resolved=$(echo "$RESPONSE" | jq -r '.data.project.repository.ch.sha // empty')
+                if [ -n "$resolved" ] && [ "$resolved" != "null" ]; then
+                  echo "  ✅ Query for $key Success"
+                  
+                  if [ "${{ inputs.make_release }}" = "true" ]; then
+                    extracted=$(echo "$RESPONSE" | jq -r '.data.project.repository.blobs.nodes[0].rawBlob // empty' | grep '#define SUSFS_VERSION' | awk -F'"' '{print $2}')
+                    susfs_versions_per_key[$key]="${extracted:-unknown}"
+                    echo "  ✅ $key → SUSFS_VERSION = ${extracted:-unknown}"
+                  fi
+                  
+                  break
+                fi
+              fi
+              
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              echo "::warning::GitLab GraphQL API failed (Attempt $RETRY_COUNT/$MAX_RETRIES). Retrying..."
+              sleep $RETRY_DELAY
+            done
+            
+            # Final Validation — SUSFS hash
+            if [ -z "$resolved" ] || [ "$resolved" = "null" ]; then
+              echo "::error::Could not resolve SUSFS ref '$user_val' for $key on GitLab."
+              exit 1
+            fi
+            
+            # Final Validation — SUSFS version
+            if [ "${{ inputs.make_release }}" = "true" ] && [ "${susfs_versions_per_key[$key]:-unknown}" = "unknown" ]; then
+              echo "::error::Could not extract SUSFS_VERSION from susfs.h for '$key' after $MAX_RETRIES attempts. Cannot proceed with release."
+              exit 1
+            fi
+            
+            susfs_hashes["$key"]="$resolved"
+            echo "  ✅ Resolved: $key → $resolved"
+          done
+          
+          # Write CSV list of active GKI versions
+          active_gki_keys_csv=$(IFS=','; echo "${active_keys[*]:-}")
+          echo "active_gki_keys=$active_gki_keys_csv" >> "$GITHUB_OUTPUT"
+          
+          # Write hash to GITHUB_OUTPUT
+          echo "susfs_hash_android12_5_10=${susfs_hashes[android12-5.10]:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "susfs_hash_android13_5_15=${susfs_hashes[android13-5.15]:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "susfs_hash_android14_6_1=${susfs_hashes[android14-6.1]:-unknown}"   >> "$GITHUB_OUTPUT"
+          echo "susfs_hash_android15_6_6=${susfs_hashes[android15-6.6]:-unknown}"   >> "$GITHUB_OUTPUT"
+          echo "susfs_hash_android16_6_12=${susfs_hashes[android16-6.12]:-unknown}" >> "$GITHUB_OUTPUT"
+          
+          # SUSFS_VERSION — only when releasing
+          if [ "${{ inputs.make_release }}" = "true" ]; then
+            susfs_base_version="unknown"
+            for key in "${active_keys[@]}"; do
+              ver="${susfs_versions_per_key[$key]:-unknown}"
+              if [ "$ver" != "unknown" ]; then
+                susfs_base_version="$ver"
+                break
+              fi
+            done
+            
+            if [ "$susfs_base_version" = "unknown" ]; then
+              echo "::error::Could not extract SUSFS_VERSION from susfs.h for any active GKI key. Cannot proceed with release."
+              exit 1
+            fi
+            
+            # make_release=true: mismatch is a hard error — prevents wrong tag
+            for key in "${active_keys[@]}"; do
+              key_ver="${susfs_versions_per_key[$key]:-unknown}"
+              if [ "$key_ver" != "$susfs_base_version" ]; then
+                echo "::error::SUSFS version mismatch: '$key' has '$key_ver', expected '$susfs_base_version'. Align refs before releasing."
+                exit 1
+              fi
+            done
+            
+            echo "susfs_base_version=$susfs_base_version" >> "$GITHUB_OUTPUT"
+          fi
+          
+          # Inject susfs_resolved_hash into each device in the matrix
+          susfs_hashes_json=$(jq -n \
+            --arg a12 "${susfs_hashes[android12-5.10]:-unknown}" \
+            --arg a13 "${susfs_hashes[android13-5.15]:-unknown}" \
+            --arg a14 "${susfs_hashes[android14-6.1]:-unknown}" \
+            --arg a15 "${susfs_hashes[android15-6.6]:-unknown}" \
+            --arg a16 "${susfs_hashes[android16-6.12]:-unknown}" \
+            '{
+              "android12-5.10": $a12,
+              "android13-5.15": $a13,
+              "android14-6.1":  $a14,
+              "android15-6.6":  $a15,
+              "android16-6.12": $a16
+            }')
+          
+          merged_matrix=$(echo "$merged_matrix" | jq \
+            --argjson hashes "$susfs_hashes_json" \
+            '[.[] | . + {susfs_resolved_hash: ($hashes["\(.android_version)-\(.kernel_version)"] // "unknown")}]')
+          
+          merged_matrix=$(echo "$merged_matrix" | jq '
+            sort_by(
+              (.os_version | gsub("OOS"; "") | tonumber? // 0) * -1,
+              .model
+            )
+          ')
+          
+          # Recalculate wrapped with updated matrix and write output
+          wrapped=$(jq -n --argjson items "$merged_matrix" '{ include: $items }')
+          echo "matrix=$(jq -c . <<< "$wrapped")" >> "$GITHUB_OUTPUT"
+          
+          echo "::endgroup::"
+
       - name: Upload build matrix
         uses: actions/upload-artifact@v7
         with:
-          path: ${{ github.workspace }}/matrix.json
+          name: build-matrix
+          path: matrix.json
           archive: false
           retention-days: 7
+
       - name: 📊 Build plan summary
         run: |
           ksu_type="${{ fromJSON(steps.set-matrix.outputs.ksu_options_normalized)[0].type }}"
@@ -461,7 +788,7 @@ jobs:
 
   trigger-release:
     needs: [set-op-model, build]
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     if: |
       !cancelled() &&
       inputs.make_release == true &&
