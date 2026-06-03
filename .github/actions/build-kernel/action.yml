@@ -306,7 +306,7 @@ runs:
         mkdir -p "$CONFIG"
         echo "CONFIG=$CONFIG" >> "$GITHUB_ENV"
         REPO="$GITHUB_WORKSPACE/.bin/repo"
-          mkdir -p "$(dirname "$REPO")
+          mkdir -p "$(dirname "$REPO")"
         if [ ! -x "$REPO" ]; then
           curl -LfsS https://storage.googleapis.com/git-repo-downloads/repo -o "$REPO"
           chmod +x "$REPO"
