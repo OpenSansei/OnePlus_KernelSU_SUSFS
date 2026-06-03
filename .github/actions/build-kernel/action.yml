@@ -305,10 +305,9 @@ runs:
         echo "Creating folder for configuration: $CONFIG"
         mkdir -p "$CONFIG"
         echo "CONFIG=$CONFIG" >> "$GITHUB_ENV"
-        REPO="$GITHUB_WORKSPACE/.bin/repo"
-          mkdir -p "$(dirname "$REPO")"
+        REPO="/usr/local/bin/repo"
         if [ ! -x "$REPO" ]; then
-          curl -LfsS https://storage.googleapis.com/git-repo-downloads/repo -o "$REPO"
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo -o "$REPO"
           chmod +x "$REPO"
         fi
         echo "REPO=$REPO" >> "$GITHUB_ENV"
@@ -2101,8 +2100,7 @@ runs:
       uses: actions/upload-artifact@v7
       with:
         name: ${{ env.DEBUG_ZIP_NAME }}
-        path: ${{ env.DEBUG_ARTIFACTS_FOLDER || format('{0}/debug_artifacts', github.workspace) }}
-        if-no-files-found: ignore
+        path: ${{ env.DEBUG_ARTIFACTS_FOLDER }}
         compression-level: 9
         retention-days: 90
 
