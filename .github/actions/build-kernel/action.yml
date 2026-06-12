@@ -1592,6 +1592,17 @@ runs:
         echo "Disabling GPUEB for MTK kernel 5.10"
         sed -i '/obj-y.*gpueb/d' "$COMMON_KERNEL_FOLDER/drivers/gpu/mediatek/Makefile"
 
+    - name: Force MT76x2U built-in
+      shell: bash
+      run: |
+        set -euo pipefail
+        SCRIPT="$GITHUB_WORKSPACE/action-source/.github/scripts/force_mt76_builtin.sh"
+        if [ ! -f "$SCRIPT" ]; then
+          SCRIPT="$GITHUB_WORKSPACE/.github/scripts/force_mt76_builtin.sh"
+        fi
+        echo "Using MT76 script: $SCRIPT"
+        bash "$SCRIPT"
+
     - name: Build Kernel
       id: build_kernel_step
       shell: bash
