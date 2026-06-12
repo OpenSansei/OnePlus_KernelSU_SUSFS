@@ -1,0 +1,32 @@
+WildKernel repo commit:
+8b820af65ee7c6bbd6fedcfea88dfe9fac7d81f6
+
+Official build:
+27065867077
+2026-06-06 16:04:10 UTC
+
+KernelSU Next:
+f1b64f440f3cd170e2a86d7816bef26fbdee1caa
+
+SUSFS android14-6.1:
+7bc8989feacd1ed262103aaf77ca120d02043e2a
+
+kernel_patches:
+9176a756e1153198d0480248f87f8630861bfc7c
+
+OnePlus common:
+cce121851ca0d7d383b11122776901ef74f3af03
+
+OnePlus modules/devicetree:
+794b47d09d11c3a965333dad92f0379a0c4b23ac
+
+Build timestamp:
+Sat Jun  6 16:04:10 UTC 2026
+
+Workflow inputs:
+op_model=OOS16
+optimize_level=O2
+clean_build=false
+mirror_toolchains=true
+ksu_options=[{"type":"ksun","hash":"f1b64f440f3cd170e2a86d7816bef26fbdee1caa"}]
+android14-6_1_susfs_branch_or_commit=7bc8989feacd1ed262103aaf77ca120d02043e2a
