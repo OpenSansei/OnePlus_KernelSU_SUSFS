@@ -838,11 +838,6 @@ runs:
         }
         
         retry_clone "https://github.com/WildKernels/kernel_patches.git" "main" "1"
-        cd "$GITHUB_WORKSPACE/kernel_patches"
-        git fetch --depth=1 origin 9176a756e1153198d0480248f87f8630861bfc7c
-        git checkout --detach 9176a756e1153198d0480248f87f8630861bfc7c
-        echo "Pinned kernel_patches to $(git rev-parse HEAD)"
-        cd "$GITHUB_WORKSPACE"
         
         if [ "${{ env.OP_SUSFS }}" = true ]; then
           echo "Using SUSFS branch/commit: $SUSFS_BRANCH"
